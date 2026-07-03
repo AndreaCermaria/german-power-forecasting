@@ -1,33 +1,15 @@
 """
-Phase 1 data pipeline — DE_LU day-ahead power price forecasting.
 
-Responsibilities (all upstream of any modelling):
-  1. Fetch the three core ENTSO-E series, one year at a time, CACHED to disk.
-     (wind+solar forecast expands to Solar / Wind Onshore / Wind Offshore.)
-  2. Merge into one clean hourly panel (DST-safe).
-  3. Engineer residual load, calendar, and leakage-aware lag features.
-  4. VALIDATE the panel so you trust it before modelling.
+This script prepares the dataset needed to forecast day ahead electricity prices for the Germany/Luxembourg bidding zone. 
+It first loads the ENTSO-E API key (that can be required freely by email), downloads yearly data for electricity prices, 
+load forecasts, and wind/solar forecasts, and caches each file locally to avoid repeated API calls. 
+The data is then merged into a clean hourly panel.
+After the raw data is collected, the script creates useful forecasting features. 
+These include renewable generation forecasts, residual load, calendar variables such as hour, weekday, weekend, month, and holidays, as well as lagged price variables 
+from the previous day and previous week. 
+It also adds rolling average and volatility indicators to capture recent market turbulence. 
+Finally, the script validates the dataset with basic quality checks and saves the final feature table as `de_lu_features.parquet`, ready to be used for modelling.
 
-Setup (never commit the token):
-    # put this in a .env file at the repo root, and add .env to .gitignore
-    echo 'ENTSOE_API_KEY=<your-token>' > .env
-    echo '.env' >> .gitignore
-
-    pip install entsoe-py pandas pyarrow holidays python-dotenv
-    python data_pipeline.py
-
-Design notes:
-  - entsoe-py methods are year-limited internally, but we still loop per year
-    so each year is cached and dev iterations don't re-hit the API.
-  - Per-year windows are half-open in intent but the API returns the boundary
-    hour on both sides, so Jan-01 00:00 is duplicated at every year seam. We
-    drop those duplicates per-series BEFORE the axis=1 join (concat(axis=1)
-    requires a unique index on every input or it raises InvalidIndexError).
-  - ENTSO-E returns HTTP 200 even when a window has no data; the library turns
-    that into NoMatchingDataError, which we catch so one empty year can't kill
-    the whole pull.
-  - Everything stays tz-aware in Europe/Brussels so the 23h/25h DST days are
-    handled correctly instead of silently corrupting the hourly grid.
 """
 
 from __future__ import annotations
