@@ -1,32 +1,15 @@
 """
-Phase 1 forecaster — DE_LU day-ahead price, quantile gradient boosting.
+Quantile gradient boosting.
 
-Consumes the panel from data_pipeline.py (`de_lu_features.parquet`) and runs a
-WALK-FORWARD backtest: train on the past, predict the next block, slide forward.
-One model per quantile, so the output is a full predictive distribution.
-
---- Why a residual target (the important bit) -----------------------------
-Power prices are non-stationary (the 2022 regime shift) and gradient-boosted
-trees CANNOT extrapolate beyond the price range seen in training. Predicting the
-absolute price level therefore biases every quantile downward during a run-up:
-the model trains on cheap history and saturates at its training max when prices
-hit new highs — upper-quantile coverage collapses.
-
-Fix: predict the DEVIATION from a recent, lag-safe level reference
-(`price_roll168_mean`, last week's price level), then add the reference back.
-The level floats with the regime automatically and the model only has to predict
-bounded residuals — which trees can do even as the absolute level explodes.
-`--target-mode level` keeps the old behaviour for comparison.
-
-Leakage guard: features are the day-ahead-knowable set (load/renewable forecasts,
-calendar, price lags shifted >=24h). The reference is a >=24h lagged rolling
-mean — also known at gate closure. `price` itself is never a feature.
+Takes the panel data_pipeline.py builds (de_lu_features.parquet) and walk forward
+backtests it.
+Prediction of how far off the price is from a recent reference level (price_roll168_mean)
 
 Run:
     python forecast.py                              # residual mode, default
-    python forecast.py --target-mode level          # old level mode
+    python forecast.py --target-mode level          # old level mode, for comparison
     python forecast.py --train-window-years 2       # rolling window instead of expanding
-    python forecast.py --step-days 90               # faster, coarser backtest
+    python forecast.py --step-days 90               # coarser/faster backtest
 """
 
 from __future__ import annotations
@@ -49,11 +32,13 @@ DEFAULT_QUANTILES = [0.05, 0.25, 0.50, 0.75, 0.95]
 # Data                                                                        #
 # --------------------------------------------------------------------------- #
 def load_data(path: str, target_mode: str):
-    """Load the panel; return X, y (price), ref (level anchor or None), columns.
+    """Load the panel and split it into X / y.
 
-    Drops rows with a missing target. In residual mode also drops the lag warm-up
-    rows where the reference is NaN. NaNs remaining inside X are kept —
-    HistGradientBoosting handles them natively.
+    Rows with no target just get dropped. In residual mode I also drop the
+    warm-up rows where the reference isn't populated yet (first week of data,
+    basically). Whatever NaNs are left inside X I leave alone on purpose —
+    HistGradientBoosting handles missing values natively, so there's no reason
+    to impute anything and pretend I know a value I don't.
     """
     df = pd.read_parquet(path)
     if TARGET not in df.columns:
@@ -84,35 +69,40 @@ def _make_model(q: float) -> HistGradientBoostingRegressor:
         max_leaf_nodes=63,
         min_samples_leaf=50,
         l2_regularization=1.0,
-        early_stopping=False,        # deterministic across retrains
+        early_stopping=False,        # keep retrains deterministic between blocks
         random_state=0,
     )
 
 
 def fit_predict_block(X_tr, y_tr_model, X_te, quantiles, ref_te=None,
                       conformal=False, calib_frac=0.2):
-    """Fit one model per quantile, predict the test block.
+    """Fit one model per quantile and predict on the held-out test block.
 
-    `y_tr_model` is the target the models actually learn (price, or price-minus-
-    reference). If `ref_te` is given we add it back to lift residual quantiles to
-    the price level. Predictions are sorted per row to enforce non-crossing.
+    y_tr_model is whatever the models are actually being asked to learn —
+    either raw price, or price-minus-reference if we're in residual mode. If
+    ref_te is passed in, I add it back at the end to lift the residual
+    predictions up to an actual price level. Predictions get sorted row-wise
+    at the end so quantiles never cross each other.
 
-    conformal=True applies PER-QUANTILE conformal shift correction: hold out the
-    most-recent `calib_frac` of the training window, fit on the rest, then for
-    each quantile q find the shift s = quantile_q(actual - predicted) on that
-    calibration slice and add it to the test predictions. This forces each
-    quantile line individually toward its nominal empirical coverage, rather than
-    only widening a symmetric interval around a potentially biased center. It is
-    the asymmetric per-quantile conformal correction identified during Phase 1 as
-    the fix for interior-quantile (and, as it turned out, median) miscalibration.
+    conformal=True turns on the per-quantile shift correction. Here's the
+    story on that: I originally had symmetric CQR in here, which was fine for
+    interval coverage but it was applying one shared correction across
+    quantiles that were actually miscalibrated in different directions and by
+    different amounts. So instead: hold out the most recent calib_frac slice
+    of the training window, fit on the rest, and for each quantile separately
+    work out the shift s that would make calib_frac's empirical coverage match
+    the nominal q, then apply that same shift to the test predictions. Each
+    quantile line gets corrected on its own terms rather than one blanket
+    adjustment for all of them — this is what actually fixed the q50 (and a
+    few interior-quantile) miscalibration I was seeing.
 
-    Note: unlike the paired-interval CQR this replaces, this method does not
-    carry the same finite-sample marginal-coverage proof (that guarantee relies
-    specifically on the max-of-two-sided-errors construction). In exchange it
-    corrects systematic per-quantile bias directly, which is the failure mode
-    actually observed here (all quantiles biased the same direction, not just
-    "too narrow"). Empirically validate against the paired version if the formal
-    guarantee matters for your write-up.
+    One caveat worth remembering for the writeup: this doesn't inherit the
+    same finite-sample coverage guarantee that paired-interval CQR has (that
+    proof depends specifically on taking the max of two-sided errors). What I
+    get instead is a direct fix for systematic per-quantile bias, which is the
+    actual failure mode I was seeing here — all quantiles pulled the same
+    direction, not just "interval too narrow." Worth double-checking against
+    the paired version if the formal guarantee ends up mattering.
     """
     cols = [f"q{int(q * 100):02d}" for q in quantiles]
 
@@ -120,39 +110,40 @@ def fit_predict_block(X_tr, y_tr_model, X_te, quantiles, ref_te=None,
         te = {q: _make_model(q).fit(X_tr, y_tr_model).predict(X_te) for q in quantiles}
     else:
         n = len(X_tr)
-        k = min(max(int(n * calib_frac), 500), n - 500)  # calibration slice size
-        X_pt, y_pt = X_tr.iloc[:-k], y_tr_model.iloc[:-k]   # proper-train (older)
-        X_ca, y_ca = X_tr.iloc[-k:], y_tr_model.iloc[-k:]   # calibration (recent)
+        k = min(max(int(n * calib_frac), 500), n - 500)  # size of the calibration slice
+        X_pt, y_pt = X_tr.iloc[:-k], y_tr_model.iloc[:-k]   # the "proper" training data (older)
+        X_ca, y_ca = X_tr.iloc[-k:], y_tr_model.iloc[-k:]   # calibration slice (most recent)
         yca = y_ca.values
 
         models = {q: _make_model(q).fit(X_pt, y_pt) for q in quantiles}
         cal = {q: models[q].predict(X_ca) for q in quantiles}
         te = {q: models[q].predict(X_te) for q in quantiles}
 
-        # Per-quantile shift: for each q, find s such that q-fraction of
-        # calibration residuals (actual - predicted) fall at or below s, then
-        # shift the test prediction by s. For q=0.5 this is exactly the median
-        # of the residuals — the same correction validated earlier, generalised
-        # to every quantile independently.
+        # For each quantile, find the shift s such that q-fraction of the
+        # calibration residuals fall at or below it, then nudge the test
+        # prediction by that amount. For q=0.5 this collapses to just the
+        # median residual — same fix I validated on the median originally,
+        # just generalized so every quantile gets its own correction.
         for q in quantiles:
             shift = np.quantile(yca - cal[q], q)
             te[q] = te[q] + shift
 
     preds = np.column_stack([te[q] for q in quantiles])
     if ref_te is not None:
-        preds = preds + ref_te.values[:, None]     # residual -> price level
-    preds = np.sort(preds, axis=1)                 # monotone quantiles
+        preds = preds + ref_te.values[:, None]     # back to price level from residual
+    preds = np.sort(preds, axis=1)                 # enforce monotone quantiles
     return pd.DataFrame(preds, index=X_te.index, columns=cols)
 # --------------------------------------------------------------------------- #
 # Walk-forward backtest                                                        #
 # --------------------------------------------------------------------------- #
 def walk_forward(X, y, ref, quantiles, init_train_years=2, step_days=30,
                  train_window_years=0, conformal=False):
-    """Walk-forward: retrain every `step_days`, predict ahead.
+    """The actual walk-forward loop: retrain every step_days, predict the next block.
 
-    train_window_years=0 -> expanding window (all history). >0 -> rolling window
-    of that many years, which keeps the training distribution closer to the test
-    period (a partial defence against non-stationarity).
+    train_window_years=0 means expanding window — use everything seen so far.
+    Set it >0 for a rolling window instead, which keeps training data closer in
+    time to whatever you're predicting — a cheap partial defense against the
+    non-stationarity problem described up top.
     """
     test_start = X.index.min() + pd.DateOffset(years=init_train_years)
     anchors = pd.date_range(test_start, X.index.max(), freq=f"{step_days}D", tz=TZ)
@@ -165,12 +156,12 @@ def walk_forward(X, y, ref, quantiles, init_train_years=2, step_days=30,
             train_mask &= X.index >= (anchor - pd.DateOffset(years=train_window_years))
         test_mask = (X.index >= anchor) & (X.index < block_end)
         if test_mask.sum() < 24 or train_mask.sum() == 0:
-            continue  # skip empty/stub trailing block (< 1 day)
+            continue  # trailing stub block, less than a day of data — not worth it
 
         y_tr = y[train_mask]
         ref_te = None
         if ref is not None:
-            y_tr = y_tr - ref[train_mask]          # learn the deviation
+            y_tr = y_tr - ref[train_mask]          # this is the deviation the model learns
             ref_te = ref[test_mask]
         block = fit_predict_block(X[train_mask], y_tr, X[test_mask],
                                   quantiles, ref_te, conformal=conformal)
@@ -188,15 +179,18 @@ def walk_forward(X, y, ref, quantiles, init_train_years=2, step_days=30,
 # Feature importance (diagnostic)                                              #
 # --------------------------------------------------------------------------- #
 def feature_importance(X, y, ref, feature_cols, eval_frac=0.2, n_repeats=5, seed=0):
-    """Permutation importance of the median (q50) model on the most-recent slice.
+    """Permutation importance for the median (q50) model, checked on the most recent slice.
 
-    Fits on the earlier portion, evaluates on the last `eval_frac` (the current
-    regime — what we actually care about), then shuffles each feature in turn and
-    measures how much median MAE worsens. Units: EUR/MWh of MAE damage, so a value
-    of 12 means 'shuffling this feature costs ~12 EUR/MWh of accuracy'.
+    Trains on the earlier chunk, evaluates on the last eval_frac — deliberately
+    the current regime, since that's the part I actually care about — then
+    shuffles each feature one at a time and sees how much worse median MAE
+    gets. The units are EUR/MWh of MAE damage: a value of 12 means "shuffling
+    this feature costs about 12 EUR/MWh of accuracy," so bigger = the model is
+    leaning on it more.
 
-    Reads in residual space when ref is set — that's what the model predicts, so
-    the ranking reflects what drives the deviation from the level anchor.
+    If ref is set, this runs in residual space, same as training — the ranking
+    ends up telling you what actually drives the deviation from the level
+    anchor, not the raw price.
     """
     n = len(X)
     cut = int(n * (1 - eval_frac))
@@ -224,10 +218,14 @@ def pinball_loss(y, q_pred, q):
 
 
 def evaluate(results: pd.DataFrame, quantiles, spike_quantile=0.95):
+    """Score everything overall, then split calm-vs-spike hours since that split
+    is the whole point of this project — nobody cares if you nail the calm
+    hours, the desk cares about the spikes.
+    """
     y = results["actual"].values
     qcols = [f"q{int(q * 100):02d}" for q in quantiles]
 
-    thr = float(np.quantile(y, spike_quantile))   # reporting slice only
+    thr = float(np.quantile(y, spike_quantile))   # threshold only used for reporting the split
     spike = y >= thr
 
     def block(mask, label):
@@ -297,7 +295,7 @@ def main():
     ap.add_argument("--train-window-years", type=int, default=0,
                     help="0 = expanding window; >0 = rolling window of N years")
     ap.add_argument("--conformal", action="store_true",
-                    help="apply split CQR so interval coverage matches nominal by construction")
+                    help="apply per-quantile conformal shift so coverage matches nominal by construction")
     ap.add_argument("--quantiles", type=float, nargs="+", default=DEFAULT_QUANTILES)
     ap.add_argument("--importance", action=argparse.BooleanOptionalAction, default=True,
                     help="print permutation feature importance (use --no-importance to skip)")
