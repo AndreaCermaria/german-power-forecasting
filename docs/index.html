@@ -373,8 +373,13 @@ function update() {
   const positionMwh = Number(document.getElementById("positionSlider").value);
   document.getElementById("positionValue").textContent = positionMwh;
 
-  const startMs = new Date(document.getElementById("startDate").value).getTime();
-  const endMs = new Date(document.getElementById("endDate").value).getTime() + (24 * HOUR_MS - 1);
+  const startVal = document.getElementById("startDate").value;
+  const endVal = document.getElementById("endDate").value;
+  if (!startVal || !endVal) return; // incomplete date typed, wait for a full value
+
+  const startMs = new Date(startVal).getTime();
+  const endMs = new Date(endVal).getTime() + (24 * HOUR_MS - 1);
+  if (isNaN(startMs) || isNaN(endMs)) return; // invalid date, ignore silently
 
   const win = getWindow(startMs, endMs);
   if (win.actual.length === 0) {

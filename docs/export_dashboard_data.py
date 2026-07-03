@@ -11,8 +11,8 @@ import os
 
 import pandas as pd
 
-SRC = "backtest_predictions.parquet"
-OUT = "docs/data/backtest.json"
+SRC = "../phase1-forecasting/results/backtest_predictions.parquet"
+OUT = "data/backtest.json"
 COLS = ["q05", "q25", "q50", "q75", "q95", "actual"]
 
 
@@ -20,7 +20,8 @@ def main():
     df = pd.read_parquet(SRC).sort_index()
     df = df[COLS].round(2)
 
-    ts_ms = (df.index.asi8 // 10**6).tolist()
+    ts_ms = (
+    df.index.tz_convert("UTC").tz_localize(None).astype("datetime64[ms]").astype("int64")).tolist()    
     rows = df.values.tolist()
     data = [[t] + r for t, r in zip(ts_ms, rows)]
 
