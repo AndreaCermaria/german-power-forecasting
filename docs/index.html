@@ -45,7 +45,7 @@
     padding: 16px 20px;
     margin-bottom: 24px;
   }
-  .control { flex: 1; min-width: 220px; }
+  .control { flex: 1; min-width: 220px; position: relative; }
   .control label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; }
   .control input[type=range] { width: 100%; }
   .control .hint { font-size: 0.8rem; color: var(--muted); }
@@ -83,7 +83,8 @@
     line-height: 14px;
     cursor: default;
   }
-  .tip:hover + .tiptext, .tip:focus + .tiptext { display: block; }
+  .metric:hover .tiptext, .metric:focus-within .tiptext,
+  .control:hover .tiptext, .control:focus-within .tiptext { display: block; }
   .tiptext {
     display: none;
     position: absolute;
@@ -100,47 +101,102 @@
   }
 
   .chart-title { font-weight: 600; margin: 4px 0 2px; }
-  .chart-caption { font-size: 0.85rem; color: var(--muted); margin-top: 4px; margin-bottom: 18px; }
+  .chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 4px 0 2px;
+  }
+  .chart-header .chart-title { margin: 0; }
+  #resetZoomBtn {
+    font-family: inherit;
+    font-size: 0.8rem;
+    color: var(--text);
+    background: #f7f8fa;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+  }
+  #resetZoomBtn:hover { background: #eceef1; }
+  .fan-legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 16px; }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    background: #fff;
+    position: relative;
+    user-select: none;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .legend-item:hover { background: #f7f8fa; }
+  .legend-item.disabled { opacity: 0.4; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+  .legend-item .tiptext {
+    top: auto;
+    bottom: 100%;
+    margin-top: 0;
+    margin-bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 230px;
+  }
+  .legend-item:hover .tiptext, .legend-item:focus .tiptext { display: block; }
   .loading { color: var(--muted); font-size: 0.9rem; }
   footer { margin-top: 50px; font-size: 0.8rem; color: var(--muted); }
 </style>
 </head>
 <body>
 
-  <h1>German Power Price — Forecast &amp; Risk</h1>
-  <p class="subtitle">DE-LU day-ahead, hourly. A quantile forecast, and what it implies for a position held in the market.</p>
+  <h1>German Power Price</h1>
+  <p class="subtitle">Germany-Luxemburg day-ahead, hourly. A quantile forecast, and what it implies for a position held in the market.</p>
 
   <p>
     This tool predicts the hourly price of electricity in Germany, one day ahead,
-    as a full range of plausible outcomes rather than a single number —
-    and translates that range into the potential loss on a position of a given size.
+    as a full range of plausible outcomes and translates that range into the
+    potential loss on a position of a given size.
   </p>
 
   <details>
-    <summary>New here? A 60-second guide to the numbers below</summary>
-    <p><strong>Why isn't there just one number?</strong> Power prices can move a lot,
-    sometimes more than expected — think of a cold, windless week when renewable
-    output drops and demand rises. So instead of one guess, the model gives a
-    <em>range</em> of plausible prices for each hour, along with how confident it is.</p>
-    <p><strong>What the fan chart shows:</strong> the shaded area is that range —
-    how wide it is tells you how uncertain the model currently is. The blue line
-    is its single best guess (the "median"). The black line is what the price
-    <em>actually</em> turned out to be, so you can see how the forecast performed
-    with hindsight.</p>
-    <p><strong>What "potential loss" means:</strong> if you held a position of a
-    given size (adjustable below), how much money could you plausibly lose in a
-    single day? That's calculated at a 99% confidence level — a loss beyond that
-    number should only happen about 1 day in 100.</p>
-    <p><strong>Tip:</strong> drag a box on the chart to zoom into any period — the
-    numbers above update to reflect exactly what's visible. Double-click the chart
-    to reset.</p>
+    <summary>How this works: data, features, model, and card calculations</summary>
+    <p><strong>Data sources.</strong> Historical day-ahead prices, load forecasts, and
+    wind/solar generation forecasts for the DE-LU bidding zone come from the
+    <strong>ENTSO-E Transparency Platform</strong>. Unplanned power plant outages come
+    from the <strong>EEX Group Transparency API</strong> (REMIT/UMM disclosures), covering
+    roughly five years of outage events.</p>
+    <p><strong>Features used by the model.</strong> The dominant driver is
+    <em>residual load</em> (forecast demand minus forecast wind and solar generation).
+    Alongside it: rolling price statistics (trailing mean/std over the past week), a
+    lag-safe rolling <em>spike-frequency</em> feature (how often price has recently
+    exceeded a volatility-based threshold, as an early-warning signal for spiky
+    regimes), and the volume of currently unplanned <em>dispatchable</em> generation
+    offline (scraped from EEX, even if with a weak signal).</p>
+    <p><strong>Model.</strong> A gradient-boosted quantile regression model
+    (<code>HistGradientBoostingRegressor</code>) is trained separately for five quantiles
+    of the price distribution (5th, 25th, 50th, 75th, 95th percentile), then calibrated
+    with conformal prediction. The whole pipeline is walk-forward backtested across 49
+    monthly out-of-sample blocks, so every prediction shown here was made without access
+    to future data.</p>
+    <p><strong>Tip:</strong> drag a box on the chart to zoom into any period or use the
+    slicer. Double-click the chart to reset.</p>
   </details>
 
   <div class="controls">
     <div class="control">
-      <label for="positionSlider">Position size (MWh)</label>
+      <label for="positionSlider">Position size (MWh) <span class="tip" tabindex="0">i</span></label>
+      <div class="tiptext">Power positions are volumetric: you commit to a quantity
+        (MWh), and P&amp;L depends on how price moves afterward. The EUR notional
+        below is an approximation using today's forecast price, shown for intuition
+        only — it isn't what drives the risk calculation.</div>
       <input type="range" id="positionSlider" min="1" max="500" value="50" step="1" />
-      <div class="hint"><span id="positionValue">50</span> MWh — all euro figures below scale with this</div>
+      <div class="hint"><span id="positionValue">50</span> MWh
+        <span id="positionNotional"></span>
+        — all euro figures below scale with this</div>
     </div>
     <div class="control">
       <label>Date range</label>
@@ -157,15 +213,12 @@
 
   <hr />
 
-  <div class="chart-title">Price forecast over time</div>
-  <div class="chart-caption">
-    Shaded bands = the range of prices the model considered plausible, at the
-    time. Black line = what actually happened. Red × marks = hours where the
-    actual price broke outside the model's 90% range.
+  <div class="chart-header">
+    <div class="chart-title">Price forecast over time</div>
+    <button id="resetZoomBtn" type="button">Reset zoom</button>
   </div>
+  <div id="fanLegend" class="fan-legend"></div>
   <div id="fanChart" style="height:440px;"></div>
-
-  <footer>Static, client-side dashboard — data pre-computed from a walk-forward backtest, no server involved.</footer>
 
 <script>
 const HOUR_MS = 3600 * 1000;
@@ -223,6 +276,10 @@ function renderMetrics(win, positionMwh) {
   const latestIdx = n - 1;
   const bandWidth = win.q95[latestIdx] - win.q05[latestIdx];
 
+  const notionalEur = positionMwh * win.q50[latestIdx];
+  document.getElementById("positionNotional").textContent =
+    isFinite(notionalEur) ? ` (≈ ${fmt(notionalEur)} EUR notional)` : "";
+
   const pnl = computePnl(win.actual, positionMwh);
   const var99 = pnl.length > 10 ? historicalVar(pnl, 0.99) : NaN;
 
@@ -233,14 +290,14 @@ function renderMetrics(win, positionMwh) {
   const breachRate = n ? breaches / n : NaN;
 
   const metrics = [
-    { label: "Price forecast", value: `${fmt(win.q50[latestIdx])} EUR/MWh`,
-      tip: "The model's single best-guess price for the most recent hour in your selected window." },
+    { label: "Price forecast (median)", value: `${fmt(win.q50[latestIdx])} EUR/MWh`,
+      tip: "The model's 50th-percentile prediction for the most recent hour in view. This is the median of the predicted distribution." },
     { label: "Forecast uncertainty", value: `±${fmt(bandWidth / 2)} EUR/MWh`,
-      tip: "Half the width of the model's 90% confidence range. Bigger = less sure right now." },
+      tip: "Half the width of the model's 90% interval (95th percentile minus 5th percentile, divided by two) for the most recent hour." },
     { label: `Potential 1-day loss (${fmt(positionMwh)} MWh)`, value: `${fmt(var99)} EUR`,
-      tip: "Value at Risk (99%): the loss level that should only be exceeded about 1 day in 100." },
+      tip: "Historical Value-at-Risk at the 99% level, computed from simulated position P&amp;L (position size × 24-hour price change) across every hour in the selected window." },
     { label: "Forecast reliability", value: `${fmt(breachRate * 100, 1)}% breach rate`,
-      tip: "How often actual price fell outside the model's 90% range. Ideally close to 10%." },
+      tip: "The share of hours in the selected window where the actual price fell outside the model's 90% predicted range." },
   ];
 
   const el = document.getElementById("metrics");
@@ -253,6 +310,40 @@ function renderMetrics(win, positionMwh) {
   `).join("");
 }
 
+const LEGEND_META = {
+  "90% likely range": { swatch: "rgba(31,119,180,0.45)",
+    tip: "The middle 90% of the model's predicted outcomes for each hour — prices should land inside this band roughly 9 times out of 10." },
+  "50% likely range": { swatch: "rgba(31,119,180,0.8)",
+    tip: "The middle 50% of the model's predicted outcomes — a tighter band around the median." },
+  "median forecast": { swatch: "#1f77b4",
+    tip: "The model's 50th-percentile prediction for each hour — the same figure shown in the \"Price forecast (median)\" card." },
+  "actual price": { swatch: "#222",
+    tip: "What the price actually settled at, shown for comparison against the forecast." },
+  "surprise (broke 90% range)": { swatch: "#c1121f", label: "broke 90% range",
+    tip: "Hours where the actual price fell outside the model's 90% predicted range." },
+};
+
+function renderFanLegend(traces) {
+  const el = document.getElementById("fanLegend");
+  const items = traces.map((t, i) => ({ t, i })).filter(({ t }) => LEGEND_META[t.name]);
+
+  el.innerHTML = items.map(({ t, i }) => `
+    <div class="legend-item" data-trace="${i}" tabindex="0">
+      <span class="legend-swatch" style="background:${LEGEND_META[t.name].swatch}"></span>
+      <span>${LEGEND_META[t.name].label || t.name}</span>
+      <div class="tiptext">${LEGEND_META[t.name].tip}</div>
+    </div>
+  `).join("");
+
+  el.querySelectorAll(".legend-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const idx = Number(item.dataset.trace);
+      const nowHidden = item.classList.toggle("disabled");
+      Plotly.restyle("fanChart", { visible: nowHidden ? "legendonly" : true }, [idx]);
+    });
+  });
+}
+
 function renderFanChart(win) {
   const x = win.dates;
   const traces = [
@@ -262,8 +353,8 @@ function renderFanChart(win) {
     { x, y: win.q75, mode: "lines", line: { width: 0 }, showlegend: false, hoverinfo: "skip" },
     { x, y: win.q25, mode: "lines", line: { width: 0 }, fill: "tonexty",
       fillcolor: "rgba(31,119,180,0.35)", name: "50% likely range" },
-    { x, y: win.q50, mode: "lines", line: { color: "#1f77b4", width: 2 }, name: "model's best guess" },
-    { x, y: win.actual, mode: "lines", line: { color: "#222", width: 1.3 }, name: "what actually happened" },
+    { x, y: win.q50, mode: "lines", line: { color: "#1f77b4", width: 2 }, name: "median forecast" },
+    { x, y: win.actual, mode: "lines", line: { color: "#222", width: 1.3 }, name: "actual price" },
   ];
 
   const breachX = [], breachY = [];
@@ -274,16 +365,18 @@ function renderFanChart(win) {
   }
   if (breachX.length) {
     traces.push({ x: breachX, y: breachY, mode: "markers",
-      marker: { color: "#c1121f", size: 6, symbol: "x" }, name: "surprise (broke the range)" });
+      marker: { color: "#c1121f", size: 6, symbol: "x" }, name: "surprise (broke 90% range)" });
   }
 
   Plotly.react("fanChart", traces, {
     height: 420,
     yaxis: { title: "EUR per MWh" },
     hovermode: "x unified",
-    legend: { orientation: "h", y: 1.15 },
-    margin: { t: 30, b: 40, l: 55, r: 20 },
+    showlegend: false,
+    margin: { t: 20, b: 40, l: 55, r: 20 },
   }, { displayModeBar: true, responsive: true });
+
+  renderFanLegend(traces);
 }
 
 function filterWinByRange(win, startMs, endMs) {
@@ -406,6 +499,10 @@ async function init() {
   // Cards should reflect whatever's actually visible on the chart, including
   // after a click-and-drag zoom — not just the date-picker range.
   document.getElementById("fanChart").on("plotly_relayout", handleChartZoom);
+
+  document.getElementById("resetZoomBtn").addEventListener("click", () => {
+    Plotly.relayout("fanChart", { "xaxis.autorange": true, "yaxis.autorange": true });
+  });
 }
 
 init();
