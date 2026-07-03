@@ -1,0 +1,19 @@
+# secrets
+.env
+env
+
+# python
+__pycache__/
+*.pyc
+
+# os
+.DS_Store
+
+# data (regenerate via pipeline scripts)
+data_cache/
+umm_cache/
+*.parquet
+!phase1-forecasting/results/backtest_predictions.parquet
+
+# scratch
+*.ipynb_checkpoints

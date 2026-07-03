@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>German Power Price — Forecast &amp; Risk</title>
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+<style>
+  :root {
+    --blue: #1f77b4;
+    --red: #c1121f;
+    --text: #222;
+    --muted: #666;
+    --border: #e2e2e2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.6rem; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); margin-top: 0; }
+  details {
+    background: #f7f8fa;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 18px 0;
+  }
+  summary { cursor: pointer; font-weight: 600; }
+  details p, details ul { color: #333; font-size: 0.95rem; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    background: #f7f8fa;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .control { flex: 1; min-width: 220px; }
+  .control label { display: block; font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; }
+  .control input[type=range] { width: 100%; }
+  .control .hint { font-size: 0.8rem; color: var(--muted); }
+  .date-inputs { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+  .date-inputs input[type=date] { padding: 4px 6px; }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .metric {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    position: relative;
+  }
+  .metric .label {
+    font-size: 0.8rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .metric .value { font-size: 1.35rem; font-weight: 700; margin-top: 2px; }
+  .tip {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #cfd8e3;
+    color: white;
+    font-size: 0.7rem;
+    text-align: center;
+    line-height: 14px;
+    cursor: default;
+  }
+  .tip:hover + .tiptext, .tip:focus + .tiptext { display: block; }
+  .tiptext {
+    display: none;
+    position: absolute;
+    z-index: 10;
+    top: 100%;
+    left: 0;
+    background: #222;
+    color: #fff;
+    font-size: 0.78rem;
+    padding: 8px 10px;
+    border-radius: 6px;
+    width: 240px;
+    margin-top: 4px;
+  }
+
+  .chart-title { font-weight: 600; margin: 4px 0 2px; }
+  .chart-caption { font-size: 0.85rem; color: var(--muted); margin-top: 4px; margin-bottom: 18px; }
+  .loading { color: var(--muted); font-size: 0.9rem; }
+  footer { margin-top: 50px; font-size: 0.8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+  <h1>German Power Price — Forecast &amp; Risk</h1>
+  <p class="subtitle">DE-LU day-ahead, hourly. One predictive distribution, viewed as both a price forecast and its risk consequence.</p>
+
+  <p>
+    This tool predicts the hourly price of electricity in Germany, one day ahead —
+    and shows what that prediction means in financial terms if you hold a position
+    in the market. <strong>The two are the same underlying model, just read two
+    different ways:</strong> as a price forecast, and as the amount of money
+    you'd need to set aside to cover the risk of holding that price exposure.
+  </p>
+
+  <details>
+    <summary>New here? A 60-second guide to the numbers below</summary>
+    <p><strong>Why isn't there just one number?</strong> Power prices can move a lot,
+    sometimes more than expected — think of a cold, windless week when renewable
+    output drops and demand rises. So instead of one guess, the model gives a
+    <em>range</em> of plausible prices for each hour, along with how confident it is.</p>
+    <p><strong>What the fan chart shows:</strong> the shaded area is that range —
+    how wide it is tells you how uncertain the model currently is. The blue line
+    is its single best guess (the "median"). The black line is what the price
+    <em>actually</em> turned out to be, so you can see how the forecast performed
+    with hindsight.</p>
+    <p><strong>What "potential loss" and "collateral" mean:</strong> if you held a
+    position of a given size (adjustable below), how much money could you
+    plausibly lose in a single day? That's calculated at a 99% confidence level —
+    a loss beyond that number should only happen about 1 day in 100. The
+    collateral figure stretches that slightly, to cover the time it would
+    realistically take to close out a position if something went wrong.</p>
+    <p><strong>What the collateral-over-time chart shows:</strong> the same
+    potential-loss figure, recalculated every day using the past year of price
+    history. Watch what happens around a real price spike — it jumps up and
+    <em>stays</em> elevated for months afterward, because the shock stays inside
+    the year-long lookback until it eventually ages out. This is a well-known
+    effect called procyclicality: the same volatility that makes a position risky
+    also makes it more expensive to hold, right when it hurts most.</p>
+  </details>
+
+  <div class="controls">
+    <div class="control">
+      <label for="positionSlider">Position size (MWh)</label>
+      <input type="range" id="positionSlider" min="1" max="500" value="50" step="1" />
+      <div class="hint"><span id="positionValue">50</span> MWh — all euro figures below scale with this</div>
+    </div>
+    <div class="control">
+      <label>Date range</label>
+      <div class="date-inputs">
+        <input type="date" id="startDate" />
+        <span>to</span>
+        <input type="date" id="endDate" />
+      </div>
+      <div class="hint">Historical backtest data — not a live forecast</div>
+    </div>
+  </div>
+
+  <div class="metrics" id="metrics"></div>
+
+  <hr />
+
+  <div class="chart-title">Price forecast over time</div>
+  <div class="chart-caption">
+    Shaded bands = the range of prices the model considered plausible, at the
+    time. Black line = what actually happened. Red × marks = hours where the
+    actual price broke outside the model's 90% range.
+  </div>
+  <div id="fanChart" style="height:440px;"></div>
+
+  <hr />
+
+  <div class="chart-title">Collateral requirement over time</div>
+  <div id="marginStatus" class="loading"></div>
+  <div id="marginChart" style="height:360px;"></div>
+  <div class="chart-caption" id="marginCaption"></div>
+
+  <footer>Static, client-side dashboard — data pre-computed from a walk-forward backtest, no server involved.</footer>
+
+<script>
+const MARGIN_WINDOW_DAYS = 250; // ~1 calendar year, standard commodity margin lookback
+const HOUR_MS = 3600 * 1000;
+
+let DATA = null; // {ts:[...], q05:[...], ... actual:[...]}
+
+function quantile(sortedAsc, q) {
+  const n = sortedAsc.length;
+  if (n === 0) return NaN;
+  const pos = (n - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (base + 1 < n) {
+    return sortedAsc[base] + rest * (sortedAsc[base + 1] - sortedAsc[base]);
+  }
+  return sortedAsc[base];
+}
+
+function computePnl(actual, positionMwh) {
+  // 24h-lag P&L, same construction as risk.position_pnl (price_changes.diff(24))
+  const out = [];
+  for (let i = 24; i < actual.length; i++) {
+    out.push(positionMwh * (actual[i] - actual[i - 24]));
+  }
+  return out;
+}
+
+function historicalVar(pnl, alpha = 0.99) {
+  const sorted = [...pnl].sort((a, b) => a - b);
+  return -quantile(sorted, 1 - alpha);
+}
+
+function initialMargin(pnl, alpha = 0.99, mporDays = 2) {
+  return historicalVar(pnl, alpha) * Math.sqrt(mporDays);
+}
+
+function sliceWindow(startMs, endMs) {
+  const { ts } = DATA;
+  let lo = 0, hi = ts.length - 1;
+  // binary search for first index >= startMs
+  let a = 0, b = ts.length;
+  while (a < b) { const m = (a + b) >> 1; if (ts[m] < startMs) a = m + 1; else b = m; }
+  const startIdx = a;
+  a = 0; b = ts.length;
+  while (a < b) { const m = (a + b) >> 1; if (ts[m] <= endMs) a = m + 1; else b = m; }
+  const endIdx = a; // exclusive
+  return { startIdx, endIdx };
+}
+
+function fmt(n, decimals = 0) {
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
+}
+
+function renderMetrics(win, positionMwh) {
+  const n = win.actual.length;
+  const latestIdx = n - 1;
+  const bandWidth = win.q95[latestIdx] - win.q05[latestIdx];
+
+  const pnl = computePnl(win.actual, positionMwh);
+  const var99 = pnl.length > 10 ? historicalVar(pnl, 0.99) : NaN;
+  const im = pnl.length > 10 ? initialMargin(pnl, 0.99, 2) : NaN;
+
+  let breaches = 0;
+  for (let i = 0; i < n; i++) {
+    if (win.actual[i] < win.q05[i] || win.actual[i] > win.q95[i]) breaches++;
+  }
+  const breachRate = n ? breaches / n : NaN;
+
+  const metrics = [
+    { label: "Price forecast", value: `${fmt(win.q50[latestIdx])} EUR/MWh`,
+      tip: "The model's single best-guess price for the most recent hour in your selected window." },
+    { label: "Forecast uncertainty", value: `±${fmt(bandWidth / 2)} EUR/MWh`,
+      tip: "Half the width of the model's 90% confidence range. Bigger = less sure right now." },
+    { label: `Potential 1-day loss (${fmt(positionMwh)} MWh)`, value: `${fmt(var99)} EUR`,
+      tip: "Value at Risk (99%): the loss level that should only be exceeded about 1 day in 100." },
+    { label: `Collateral to post (${fmt(positionMwh)} MWh)`, value: `${fmt(im)} EUR`,
+      tip: "The potential loss figure stretched to cover a realistic close-out period." },
+    { label: "Forecast reliability", value: `${fmt(breachRate * 100, 1)}% breach rate`,
+      tip: "How often actual price fell outside the model's 90% range. Ideally close to 10%." },
+  ];
+
+  const el = document.getElementById("metrics");
+  el.innerHTML = metrics.map(m => `
+    <div class="metric">
+      <div class="label">${m.label} <span class="tip" tabindex="0">i</span></div>
+      <div class="tiptext">${m.tip}</div>
+      <div class="value">${m.value}</div>
+    </div>
+  `).join("");
+}
+
+function renderFanChart(win) {
+  const x = win.dates;
+  const traces = [
+    { x, y: win.q95, mode: "lines", line: { width: 0 }, showlegend: false, hoverinfo: "skip" },
+    { x, y: win.q05, mode: "lines", line: { width: 0 }, fill: "tonexty",
+      fillcolor: "rgba(31,119,180,0.15)", name: "90% likely range" },
+    { x, y: win.q75, mode: "lines", line: { width: 0 }, showlegend: false, hoverinfo: "skip" },
+    { x, y: win.q25, mode: "lines", line: { width: 0 }, fill: "tonexty",
+      fillcolor: "rgba(31,119,180,0.35)", name: "50% likely range" },
+    { x, y: win.q50, mode: "lines", line: { color: "#1f77b4", width: 2 }, name: "model's best guess" },
+    { x, y: win.actual, mode: "lines", line: { color: "#222", width: 1.3 }, name: "what actually happened" },
+  ];
+
+  const breachX = [], breachY = [];
+  for (let i = 0; i < win.actual.length; i++) {
+    if (win.actual[i] < win.q05[i] || win.actual[i] > win.q95[i]) {
+      breachX.push(win.dates[i]); breachY.push(win.actual[i]);
+    }
+  }
+  if (breachX.length) {
+    traces.push({ x: breachX, y: breachY, mode: "markers",
+      marker: { color: "#c1121f", size: 6, symbol: "x" }, name: "surprise (broke the range)" });
+  }
+
+  Plotly.react("fanChart", traces, {
+    height: 420,
+    yaxis: { title: "EUR per MWh" },
+    hovermode: "x unified",
+    legend: { orientation: "h", y: 1.15 },
+    margin: { t: 30, b: 40, l: 55, r: 20 },
+  }, { displayModeBar: true, responsive: true });
+}
+
+function renderMarginPath(win, positionMwh) {
+  const windowHours = MARGIN_WINDOW_DAYS * 24;
+  const pnl = computePnl(win.actual, positionMwh);
+  const statusEl = document.getElementById("marginStatus");
+  const captionEl = document.getElementById("marginCaption");
+
+  if (pnl.length < windowHours) {
+    const daysHave = Math.floor(pnl.length / 24);
+    statusEl.textContent = `This chart needs about ${MARGIN_WINDOW_DAYS} days of price history to compute a rolling collateral figure (you currently have ~${daysHave} days selected). Widen the date range above to see it.`;
+    Plotly.react("marginChart", [], { height: 360 });
+    captionEl.textContent = "";
+    return;
+  }
+
+  statusEl.textContent = "Computing rolling collateral path…";
+  captionEl.textContent = "";
+
+  // let the status message paint before the (synchronous) heavy loop
+  setTimeout(() => {
+    const pnlDates = win.dates.slice(24); // pnl[i] corresponds to win.dates[i+24]
+    const imDates = [], imVals = [];
+    const step = 24;
+    for (let end = windowHours; end <= pnl.length; end += step) {
+      const w = pnl.slice(end - windowHours, end);
+      const sorted = [...w].sort((a, b) => a - b);
+      const v = -quantile(sorted, 0.01) * Math.sqrt(2); // VaR99 * sqrt(mpor=2)
+      imDates.push(pnlDates[end - 1]);
+      imVals.push(v);
+    }
+
+    const traces = [
+      { x: win.dates, y: win.actual, mode: "lines", line: { color: "#999", width: 0.6 },
+        opacity: 0.6, name: "actual price", yaxis: "y1" },
+      { x: imDates, y: imVals, mode: "lines", line: { color: "#c1121f", width: 2 },
+        name: `collateral needed (${fmt(positionMwh)} MWh)`, yaxis: "y2" },
+    ];
+
+    Plotly.react("marginChart", traces, {
+      height: 350,
+      hovermode: "x unified",
+      legend: { orientation: "h", y: 1.15 },
+      margin: { t: 20, b: 40, l: 55, r: 55 },
+      yaxis: { title: "Price (EUR/MWh)" },
+      yaxis2: { title: "Collateral (EUR)", overlaying: "y", side: "right" },
+    }, { displayModeBar: true, responsive: true });
+
+    statusEl.textContent = "";
+    captionEl.textContent = "The red line recalculates every day using the trailing year of price history. A price shock pushes it up quickly — and it stays elevated for months afterward, since the shock remains inside that trailing window until enough time passes for it to age out.";
+  }, 20);
+}
+
+function getWindow(startMs, endMs) {
+  const { startIdx, endIdx } = sliceWindow(startMs, endMs);
+  const slice = (arr) => arr.slice(startIdx, endIdx);
+  const tsSlice = slice(DATA.ts);
+  return {
+    dates: tsSlice.map(t => new Date(t)),
+    q05: slice(DATA.q05), q25: slice(DATA.q25), q50: slice(DATA.q50),
+    q75: slice(DATA.q75), q95: slice(DATA.q95), actual: slice(DATA.actual),
+  };
+}
+
+function update() {
+  const positionMwh = Number(document.getElementById("positionSlider").value);
+  document.getElementById("positionValue").textContent = positionMwh;
+
+  const startMs = new Date(document.getElementById("startDate").value).getTime();
+  const endMs = new Date(document.getElementById("endDate").value).getTime() + (24 * HOUR_MS - 1);
+
+  const win = getWindow(startMs, endMs);
+  if (win.actual.length === 0) {
+    document.getElementById("metrics").innerHTML = "<p>No data in selected range.</p>";
+    Plotly.react("fanChart", [], { height: 420 });
+    Plotly.react("marginChart", [], { height: 360 });
+    return;
+  }
+
+  renderMetrics(win, positionMwh);
+  renderFanChart(win);
+  renderMarginPath(win, positionMwh);
+}
+
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+async function init() {
+  const res = await fetch("data/backtest.json");
+  const payload = await res.json();
+  const cols = payload.columns;
+  const idx = Object.fromEntries(cols.map((c, i) => [c, i]));
+
+  DATA = {
+    ts: payload.data.map(r => r[idx.ts]),
+    q05: payload.data.map(r => r[idx.q05]),
+    q25: payload.data.map(r => r[idx.q25]),
+    q50: payload.data.map(r => r[idx.q50]),
+    q75: payload.data.map(r => r[idx.q75]),
+    q95: payload.data.map(r => r[idx.q95]),
+    actual: payload.data.map(r => r[idx.actual]),
+  };
+
+  const minDate = new Date(DATA.ts[0]);
+  const maxDate = new Date(DATA.ts[DATA.ts.length - 1]);
+  const toInputDate = (d) => d.toISOString().slice(0, 10);
+
+  const defaultStart = new Date(maxDate.getTime() - 400 * 24 * HOUR_MS);
+  const startInput = document.getElementById("startDate");
+  const endInput = document.getElementById("endDate");
+  startInput.min = toInputDate(minDate);
+  startInput.max = toInputDate(maxDate);
+  endInput.min = toInputDate(minDate);
+  endInput.max = toInputDate(maxDate);
+  startInput.value = toInputDate(defaultStart < minDate ? minDate : defaultStart);
+  endInput.value = toInputDate(maxDate);
+
+  const debounced = debounce(update, 250);
+  document.getElementById("positionSlider").addEventListener("input", debounced);
+  startInput.addEventListener("change", update);
+  endInput.addEventListener("change", update);
+
+  update();
+}
+
+init();
+</script>
+</body>
+</html>
