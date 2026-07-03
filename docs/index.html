@@ -108,14 +108,12 @@
 <body>
 
   <h1>German Power Price — Forecast &amp; Risk</h1>
-  <p class="subtitle">DE-LU day-ahead, hourly. One predictive distribution, viewed as both a price forecast and its risk consequence.</p>
+  <p class="subtitle">DE-LU day-ahead, hourly. A quantile forecast, and what it implies for a position held in the market.</p>
 
   <p>
-    This tool predicts the hourly price of electricity in Germany, one day ahead —
-    and shows what that prediction means in financial terms if you hold a position
-    in the market. <strong>The two are the same underlying model, just read two
-    different ways:</strong> as a price forecast, and as the amount of money
-    you'd need to set aside to cover the risk of holding that price exposure.
+    This tool predicts the hourly price of electricity in Germany, one day ahead,
+    as a full range of plausible outcomes rather than a single number —
+    and translates that range into the potential loss on a position of a given size.
   </p>
 
   <details>
@@ -129,19 +127,13 @@
     is its single best guess (the "median"). The black line is what the price
     <em>actually</em> turned out to be, so you can see how the forecast performed
     with hindsight.</p>
-    <p><strong>What "potential loss" and "collateral" mean:</strong> if you held a
-    position of a given size (adjustable below), how much money could you
-    plausibly lose in a single day? That's calculated at a 99% confidence level —
-    a loss beyond that number should only happen about 1 day in 100. The
-    collateral figure stretches that slightly, to cover the time it would
-    realistically take to close out a position if something went wrong.</p>
-    <p><strong>What the collateral-over-time chart shows:</strong> the same
-    potential-loss figure, recalculated every day using the past year of price
-    history. Watch what happens around a real price spike — it jumps up and
-    <em>stays</em> elevated for months afterward, because the shock stays inside
-    the year-long lookback until it eventually ages out. This is a well-known
-    effect called procyclicality: the same volatility that makes a position risky
-    also makes it more expensive to hold, right when it hurts most.</p>
+    <p><strong>What "potential loss" means:</strong> if you held a position of a
+    given size (adjustable below), how much money could you plausibly lose in a
+    single day? That's calculated at a 99% confidence level — a loss beyond that
+    number should only happen about 1 day in 100.</p>
+    <p><strong>Tip:</strong> drag a box on the chart to zoom into any period — the
+    numbers above update to reflect exactly what's visible. Double-click the chart
+    to reset.</p>
   </details>
 
   <div class="controls">
@@ -173,20 +165,14 @@
   </div>
   <div id="fanChart" style="height:440px;"></div>
 
-  <hr />
-
-  <div class="chart-title">Collateral requirement over time</div>
-  <div id="marginStatus" class="loading"></div>
-  <div id="marginChart" style="height:360px;"></div>
-  <div class="chart-caption" id="marginCaption"></div>
-
   <footer>Static, client-side dashboard — data pre-computed from a walk-forward backtest, no server involved.</footer>
 
 <script>
-const MARGIN_WINDOW_DAYS = 250; // ~1 calendar year, standard commodity margin lookback
 const HOUR_MS = 3600 * 1000;
 
 let DATA = null; // {ts:[...], q05:[...], ... actual:[...]}
+let currentWin = null;       // the window currently loaded from the date pickers
+let currentPositionMwh = 50; // last-used position size
 
 function quantile(sortedAsc, q) {
   const n = sortedAsc.length;
@@ -214,10 +200,6 @@ function historicalVar(pnl, alpha = 0.99) {
   return -quantile(sorted, 1 - alpha);
 }
 
-function initialMargin(pnl, alpha = 0.99, mporDays = 2) {
-  return historicalVar(pnl, alpha) * Math.sqrt(mporDays);
-}
-
 function sliceWindow(startMs, endMs) {
   const { ts } = DATA;
   let lo = 0, hi = ts.length - 1;
@@ -243,7 +225,6 @@ function renderMetrics(win, positionMwh) {
 
   const pnl = computePnl(win.actual, positionMwh);
   const var99 = pnl.length > 10 ? historicalVar(pnl, 0.99) : NaN;
-  const im = pnl.length > 10 ? initialMargin(pnl, 0.99, 2) : NaN;
 
   let breaches = 0;
   for (let i = 0; i < n; i++) {
@@ -258,8 +239,6 @@ function renderMetrics(win, positionMwh) {
       tip: "Half the width of the model's 90% confidence range. Bigger = less sure right now." },
     { label: `Potential 1-day loss (${fmt(positionMwh)} MWh)`, value: `${fmt(var99)} EUR`,
       tip: "Value at Risk (99%): the loss level that should only be exceeded about 1 day in 100." },
-    { label: `Collateral to post (${fmt(positionMwh)} MWh)`, value: `${fmt(im)} EUR`,
-      tip: "The potential loss figure stretched to cover a realistic close-out period." },
     { label: "Forecast reliability", value: `${fmt(breachRate * 100, 1)}% breach rate`,
       tip: "How often actual price fell outside the model's 90% range. Ideally close to 10%." },
   ];
@@ -307,55 +286,42 @@ function renderFanChart(win) {
   }, { displayModeBar: true, responsive: true });
 }
 
-function renderMarginPath(win, positionMwh) {
-  const windowHours = MARGIN_WINDOW_DAYS * 24;
-  const pnl = computePnl(win.actual, positionMwh);
-  const statusEl = document.getElementById("marginStatus");
-  const captionEl = document.getElementById("marginCaption");
-
-  if (pnl.length < windowHours) {
-    const daysHave = Math.floor(pnl.length / 24);
-    statusEl.textContent = `This chart needs about ${MARGIN_WINDOW_DAYS} days of price history to compute a rolling collateral figure (you currently have ~${daysHave} days selected). Widen the date range above to see it.`;
-    Plotly.react("marginChart", [], { height: 360 });
-    captionEl.textContent = "";
-    return;
+function filterWinByRange(win, startMs, endMs) {
+  let startIdx = 0, endIdx = win.dates.length;
+  for (let i = 0; i < win.dates.length; i++) {
+    if (win.dates[i].getTime() >= startMs) { startIdx = i; break; }
+    startIdx = win.dates.length;
   }
+  for (let i = win.dates.length - 1; i >= 0; i--) {
+    if (win.dates[i].getTime() <= endMs) { endIdx = i + 1; break; }
+    endIdx = 0;
+  }
+  const slice = (arr) => arr.slice(startIdx, endIdx);
+  return {
+    dates: slice(win.dates),
+    q05: slice(win.q05), q25: slice(win.q25), q50: slice(win.q50),
+    q75: slice(win.q75), q95: slice(win.q95), actual: slice(win.actual),
+  };
+}
 
-  statusEl.textContent = "Computing rolling collateral path…";
-  captionEl.textContent = "";
+function handleChartZoom(eventdata) {
+  if (!currentWin) return;
 
-  // let the status message paint before the (synchronous) heavy loop
-  setTimeout(() => {
-    const pnlDates = win.dates.slice(24); // pnl[i] corresponds to win.dates[i+24]
-    const imDates = [], imVals = [];
-    const step = 24;
-    for (let end = windowHours; end <= pnl.length; end += step) {
-      const w = pnl.slice(end - windowHours, end);
-      const sorted = [...w].sort((a, b) => a - b);
-      const v = -quantile(sorted, 0.01) * Math.sqrt(2); // VaR99 * sqrt(mpor=2)
-      imDates.push(pnlDates[end - 1]);
-      imVals.push(v);
-    }
+  // Box-zoom or manual axis-range edit gives explicit range keys.
+  const hasRange = eventdata && ("xaxis.range[0]" in eventdata) && ("xaxis.range[1]" in eventdata);
+  // Double-click / "reset axes" gives an autorange flag instead.
+  const isReset = eventdata && (eventdata["xaxis.autorange"] === true);
 
-    const traces = [
-      { x: win.dates, y: win.actual, mode: "lines", line: { color: "#999", width: 0.6 },
-        opacity: 0.6, name: "actual price", yaxis: "y1" },
-      { x: imDates, y: imVals, mode: "lines", line: { color: "#c1121f", width: 2 },
-        name: `collateral needed (${fmt(positionMwh)} MWh)`, yaxis: "y2" },
-    ];
-
-    Plotly.react("marginChart", traces, {
-      height: 350,
-      hovermode: "x unified",
-      legend: { orientation: "h", y: 1.15 },
-      margin: { t: 20, b: 40, l: 55, r: 55 },
-      yaxis: { title: "Price (EUR/MWh)" },
-      yaxis2: { title: "Collateral (EUR)", overlaying: "y", side: "right" },
-    }, { displayModeBar: true, responsive: true });
-
-    statusEl.textContent = "";
-    captionEl.textContent = "The red line recalculates every day using the trailing year of price history. A price shock pushes it up quickly — and it stays elevated for months afterward, since the shock remains inside that trailing window until enough time passes for it to age out.";
-  }, 20);
+  if (hasRange) {
+    const startMs = new Date(eventdata["xaxis.range[0]"]).getTime();
+    const endMs = new Date(eventdata["xaxis.range[1]"]).getTime();
+    if (isNaN(startMs) || isNaN(endMs)) return;
+    const zoomed = filterWinByRange(currentWin, startMs, endMs);
+    if (zoomed.actual.length > 0) renderMetrics(zoomed, currentPositionMwh);
+  } else if (isReset) {
+    renderMetrics(currentWin, currentPositionMwh);
+  }
+  // Any other relayout event (e.g. plain resize) is ignored.
 }
 
 function getWindow(startMs, endMs) {
@@ -382,16 +348,17 @@ function update() {
   if (isNaN(startMs) || isNaN(endMs)) return; // invalid date, ignore silently
 
   const win = getWindow(startMs, endMs);
+  currentWin = win;
+  currentPositionMwh = positionMwh;
+
   if (win.actual.length === 0) {
     document.getElementById("metrics").innerHTML = "<p>No data in selected range.</p>";
     Plotly.react("fanChart", [], { height: 420 });
-    Plotly.react("marginChart", [], { height: 360 });
     return;
   }
 
   renderMetrics(win, positionMwh);
   renderFanChart(win);
-  renderMarginPath(win, positionMwh);
 }
 
 function debounce(fn, ms) {
@@ -435,6 +402,10 @@ async function init() {
   endInput.addEventListener("change", update);
 
   update();
+
+  // Cards should reflect whatever's actually visible on the chart, including
+  // after a click-and-drag zoom — not just the date-picker range.
+  document.getElementById("fanChart").on("plotly_relayout", handleChartZoom);
 }
 
 init();
