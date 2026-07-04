@@ -25,7 +25,7 @@ All series are merged into a single hourly panel: `de_lu_features.parquet` — 1
 
 **HistGradientBoostingRegressor** (scikit-learn), trained as a **quantile regression ensemble** producing five quantiles (q05, q25, q50, q75, q95) per hour, wrapped in **conformalized quantile regression (CQR)** for calibrated prediction intervals.
 
-Validation is a **walk-forward backtest over 49 monthly blocks** — the model is retrained at each step using only data available up to that point in time, so the reported accuracy reflects what a trader or risk desk would actually have seen in production, not a model trained with hindsight.
+Validation is a **walk forward backtest over 49 monthly blocks** — the model is retrained at each step using only data available up to that point in time, so the reported accuracy reflects what a trader or risk desk would actually have seen in production, not a model trained with hindsight.
 
 ### Key variables
 
@@ -50,17 +50,11 @@ Hand-tuned tail-weighting multipliers were explicitly rejected: they're not defe
 Built on top of the same quantile forecasts:
 
 - **Value-at-Risk (VaR) and Expected Shortfall (ES)** at the 99% confidence level, derived from the model's predictive distribution
-- **Initial margin**, which extends the VaR horizon to cover a realistic close-out period for a position
+- **Initial margin**, which extends the VaR horizon to cover a realistic close out period for a position
 - **Procyclicality**, tracked by recomputing the margin figure daily over a rolling one-year lookback window — this is what makes a past price spike visible in the collateral requirement for months afterward, until it ages out of the window
 
 ## The dashboard
 
-The dashboard is a **static, client-side page** — all figures (fan chart values, VaR, margin, procyclicality series) are pre-computed from the walk-forward backtest and shipped as data; there is no server or live model call behind it.
-
-**Price forecast card / fan chart** — for each hour, shows the shaded plausible price range from the model's predictive distribution at the time the forecast was made, the median forecast (blue line), and the realized price (black line) for hindsight comparison. Hours where the actual price broke outside the model's 90% interval are flagged with a red marker, giving a visual read on calibration.
-
-**Potential loss / collateral card** — the user sets a position size (MWh); the card converts the 99% VaR/ES figure for the selected date range into a euro amount that scales with position size, and separately reports the collateral figure (VaR extended to cover close-out time).
-
-**Collateral-over-time chart** — replays the daily initial margin calculation over the backtest period using the rolling one-year lookback, so the procyclicality effect is visible directly: margin jumps at a spike and stays elevated until the shock exits the lookback window.
+The dashboard is a **static, client side page**, all figures are pre computed from the backtest.
 
 
