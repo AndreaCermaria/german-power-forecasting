@@ -92,9 +92,32 @@ The improvement shows up specifically where it matters: spike hour accuracy and 
 
 ## Risk module
 
-- **Value at Risk (VaR) and Expected Shortfall (ES)**, computed both historically (directly from the model's predictive quantiles) and parametrically (Gaussian), at the 99% confidence level. On a real 2022 test window, historical VaR came out at 226 against a parametric VaR of roughly 15% lower, the Gaussian assumption understates the tails exactly where it matters, since day ahead power prices are not remotely normal. Expected Shortfall on the same window came out at 285.5.
-- **Initial margin**, 319.6 on the same 2022 window.
-- **Procyclicality**, tracked by recomputing the margin figure daily over a rolling one year lookback. This is what makes a past price spike visible in the collateral requirement for months afterward, until it finally ages out of the window — the mechanism behind margin calls tightening exactly when the market is already under stress, which is the central criticism of how initial margin works in practice.
+This module answers the questions a risk manager or clearing house would ask about the forecasted prices: how much could be lost on a bad day, how bad is a truly extreme day, and how much collateral should be held against that risk. All figures below refer to a position of 1 MWh and are expressed in €/MWh; the dashboard's position slider scales them linearly to any position size in EUR notional terms.
+
+### Value at Risk (VaR) and Expected Shortfall (ES)
+
+VaR estimates the daily loss that should only be exceeded 1 day in 100 (the 99% confidence level). ES goes one step further and asks: *on* those worst days, how bad is the loss on average?
+
+Both are computed two ways:
+
+- **Historical** read directly from the model's own predictive distribution.
+- **Parametric** under the textbook assumption that returns follow a normal (Gaussian) distribution.
+
+On a real 2022 test window, the historical VaR came out at **€226/MWh**, while the parametric figure was roughly 15% lower. That gap is the point: power prices have far more extreme days than a normal distribution allows for, so the textbook assumption understates risk exactly where it matters most. Expected Shortfall on the same window was **€285.5/MWh** — meaning that when one of those 1 in 100 days does occur, the average loss is €285.5 per MWh held.
+
+### Initial margin
+
+This is the collateral a clearing house would require upfront to cover potential losses while it closes out a defaulted position, a process that takes several days, not one. The one day VaR is therefore scaled up to cover that multi day window, giving a margin requirement of **€319.6/MWh** on the 2022 test period.
+
+### Procyclicality
+
+The margin figure is recomputed daily using a rolling one year lookback of price history. This reveals a well known problem with how initial margin works in practice: after a price spike, the spike stays inside the lookback window for a full year, keeping collateral requirements elevated long after the event and, worse, margin requirements rise precisely when markets are already stressed and participants can least afford to post more collateral. 
+
+| Metric (99%, 2022 test window) | Value |
+|---|---|
+| Historical VaR | €226/MWh |
+| Expected Shortfall | €285.5/MWh |
+| Initial margin | €319.6/MWh |
 
 ## The dashboard
 
