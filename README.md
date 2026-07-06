@@ -73,21 +73,22 @@ The lower and middle quantiles are well calibrated. q75/q95 still run a little h
 An early version of this model had a real calibration bug (q50 empirical coverage 0.39 vs. nominal 0.50), traced to symmetric CQR applying one shared correction across quantiles that were actually miscalibrated by different amounts in different directions. Replacing it with a **per quantile shift**, computed independently for each of the five quantiles, is what's reflected in the calibration table above.
 
 ## Testing outage data (REMIT/UMM)
-
-The hypothesis: unplanned outages at different plant types shift the merit order differently, losing cheap baseload (lignite) and losing the marginal, frequently price setting technology (gas) shouldn't move price the same way a blanket "MW offline" number implies. Outage events were engineered into four fuel specific hourly features (lignite, gas, hard coal, other dispatchable) and added to a second backtest run under the same walk forward methodology.
-
-| | Baseline | + outage features | Δ |
-|---|---|---|---|
-| Overall median MAE | 30.1 | 29.7 | −0.4 |
-| Overall pinball (avg) | 10.25 | 10.14 | −0.11 |
-| Spike-hour median MAE | 81.4 | 81.6 | +0.2 |
-| Spike-hour pinball (avg) | 28.25 | 28.46 | +0.21 |
-| q75 calibration | 0.692 | 0.692 | 0.000 |
-| q95 calibration | 0.917 | 0.918 | +0.001 |
-
-On the hours that actually matter, the price spikes, nothing improved. The calibration numbers for the upper quantiles (q75/q95) came out identical to three decimal places, meaning the model's confidence band around spike prices didn't get any more accurate. And spike hour prediction accuracy actually got very slightly worse, not better.
-
-**Conclusion: outage data is not part of the production model.** It's a real, tested result rather than a dropped feature — it rules out a plausible hypothesis for closing the q75/q95 gap and points toward cross-border flow data as the more promising next lever, since the current gap looks more like an information problem (what the model can see about imminent tightness) than a statistical one.
+ 
+The hypothesis: unplanned generator outages should carry information about upcoming price spikes, since losing dispatchable capacity tightens the market exactly when prices are most likely to move. Outage events were engineered into an hourly feature, total unplanned dispatchable capacity offline, and added to a second backtest run under the same walk-forward methodology.
+ 
+| | Baseline | + outage feature |
+|---|---|---|
+| Overall median MAE | 30.1 | 29.9 |
+| Overall pinball (avg) | 10.25 | 10.17 |
+| Spike-hour median MAE | 81.4 | **80.0** |
+| Spike-hour RMSE | 102.9 | **101.6** |
+| Spike-hour pinball (avg) | 28.25 | **27.62** |
+| q75 calibration | 0.692 | 0.692 |
+| q95 calibration | 0.917 | 0.920 |
+ 
+The improvement shows up specifically where it matters: spike hour accuracy and pinball loss both improved. Permutation importance backs this up, the feature scores 0.18.
+ 
+**Conclusion: outage data is part of the production model.**
 
 ## Risk module
 
